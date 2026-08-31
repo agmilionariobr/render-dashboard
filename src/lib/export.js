@@ -1,62 +1,47 @@
 import * as XLSX from "xlsx";
-import { getConversation } from "./chatwoot";
 
-// Extrai o conversation_id de um item do Kanban.
-// O formato pode variar (item_details.conversation_id, conversation_id direto, etc.)
-// então tentamos os caminhos mais comuns.
-function extractConversationId(item) {
-  return (
-    item.conversation_id ||
-    item.item_details?.conversation_id ||
-    item.conversation?.id ||
-    null
-  );
-}
+// Estrutura real confirmada via teste ao vivo (card "Pancremo", account_id 41):
+// item.item_details.custom_attributes é uma LISTA de objetos { name, type, value },
+// não um objeto simples como era o custom_attributes da conversa.
+// Ex.: [{ name: "Distribuidora", type: "string", value: "TESTE" }, ...]
+//
+// Os campos hoje passaram a viver no CARD do Kanban (não mais na conversa),
+// o que permite existirem mesmo sem conversa vinculada (conversation: null).
 
-// Para cada card do Kanban, busca a conversa vinculada e extrai os
-// custom_attributes. Roda em lotes pequenos para não sobrecarregar a API.
-export async function enrichItemsWithCustomAttributes(items, { onProgress, batchSize = 5 } = {}) {
-  const enriched = [];
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize);
-    const results = await Promise.all(
-      batch.map(async (item) => {
-        const conversationId = extractConversationId(item);
-        if (!conversationId) return { ...item, custom_attributes: {} };
-        try {
-          const conv = await getConversation(conversationId);
-          return { ...item, custom_attributes: conv?.custom_attributes || {} };
-        } catch {
-          return { ...item, custom_attributes: {} };
-        }
-      })
-    );
-    enriched.push(...results);
-    if (onProgress) onProgress(enriched.length, items.length);
+// Transforma a lista de custom_attributes em um objeto simples { nome: valor },
+// pra facilitar a leitura no resto do código.
+function customAttributesToMap(item) {
+  const list = item.item_details?.custom_attributes;
+  if (!Array.isArray(list)) return {};
+  const map = {};
+  for (const attr of list) {
+    if (!attr?.name) continue;
+    const v = attr.value;
+    map[attr.name] = Array.isArray(v) ? (v.length ? v.join(", ") : "") : v ?? "";
   }
-  return enriched;
+  return map;
 }
 
-// Filtra itens por período (baseado em created_at, em segundos unix ou ISO).
+// Filtra itens por período (baseado em created_at do card).
 export function filterByPeriod(items, { startDate, endDate }) {
   if (!startDate && !endDate) return items;
   const start = startDate ? new Date(startDate).getTime() : -Infinity;
-  const end = endDate ? new Date(endDate).getTime() + 24 * 60 * 60 * 1000 - 1 : Infinity; // fim do dia
+  const end = endDate ? new Date(endDate).getTime() + 24 * 60 * 60 * 1000 - 1 : Infinity;
   return items.filter((item) => {
-    const raw = item.created_at || item.item_details?.created_at;
+    const raw = item.created_at;
     if (!raw) return true;
     const ts = typeof raw === "number" ? raw * 1000 : new Date(raw).getTime();
     return ts >= start && ts <= end;
   });
 }
 
-// Gera e baixa o arquivo .xlsx a partir dos itens enriquecidos.
-// `columns` define quais colunas fixas aparecem e em que ordem.
+// Gera e baixa o arquivo .xlsx a partir dos itens do Kanban.
 export function exportToExcel(items, columns, filename = "export.xlsx") {
   const rows = items.map((item) => {
+    const attrs = customAttributesToMap(item);
     const row = {};
     columns.forEach((col) => {
-      row[col.label] = col.getValue(item);
+      row[col.label] = col.getValue(item, attrs);
     });
     return row;
   });
@@ -65,28 +50,28 @@ export function exportToExcel(items, columns, filename = "export.xlsx") {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Exportação");
 
-  // largura automática simples por coluna
   ws["!cols"] = columns.map((col) => ({ wch: Math.max(col.label.length + 2, 14) }));
 
   XLSX.writeFile(wb, filename);
 }
 
 // Colunas fixas da v1 - Render Economia.
-// title/value do card + os 9 atributos customizados mapeados.
+// Nomes batem exatamente com os "Campos Personalizados do Kanban" criados
+// pelo Wagner no funil GD2 (confirmado ao vivo em 31/08/2026).
 export const RENDER_EXPORT_COLUMNS = [
-  { label: "Título", getValue: (i) => i.item_details?.title || i.title || "" },
-  { label: "Status", getValue: (i) => i.item_details?.status || i.status || "" },
+  { label: "Título", getValue: (i) => i.item_details?.title || "" },
+  { label: "Etapa", getValue: (i) => i.funnel?.stages?.[i.funnel_stage]?.name || i.funnel_stage || "" },
   { label: "Valor", getValue: (i) => i.item_details?.value ?? "" },
   { label: "Criado em", getValue: (i) => formatDate(i.created_at) },
-  { label: "Distribuidora", getValue: (i) => i.custom_attributes?.distribuidora || "" },
-  { label: "Usina", getValue: (i) => i.custom_attributes?.usina || "" },
-  { label: "Valor Conta", getValue: (i) => i.custom_attributes?.valor_conta ?? "" },
-  { label: "Comissão Render", getValue: (i) => i.custom_attributes?.comisso_render ?? "" },
-  { label: "Comissão Vendedor", getValue: (i) => i.custom_attributes?.comisso_vendedor ?? "" },
-  { label: "Comissão Parceiro", getValue: (i) => i.custom_attributes?.comisso_parceiro ?? "" },
-  { label: "Canal de Aquisição", getValue: (i) => i.custom_attributes?.canal_de_aquisio || "" },
-  { label: "Parceiro", getValue: (i) => i.custom_attributes?.parceiro || "" },
-  { label: "Modelo de Pagamento", getValue: (i) => i.custom_attributes?.modelo_de_pagamento || "" },
+  { label: "Canal de Aquisição", getValue: (i, a) => a["Canal de Aquisição"] || "" },
+  { label: "Nome do Parceiro", getValue: (i, a) => a["Nome do Parceiro"] || "" },
+  { label: "Geradora", getValue: (i, a) => a["Geradora"] || "" },
+  { label: "Distribuidora", getValue: (i, a) => a["Distribuidora"] || "" },
+  { label: "Valor da Fatura", getValue: (i, a) => a["Valor da Fatura"] ?? "" },
+  { label: "Comissão Total", getValue: (i, a) => a["Comissão Total"] ?? "" },
+  { label: "Comissão Vendedor", getValue: (i, a) => a["Comissão Vendedor"] ?? "" },
+  { label: "Comissão Parceiro", getValue: (i, a) => a["Comissão Parceiro"] ?? "" },
+  { label: "Modelo de Pagamento", getValue: (i, a) => a["Modelo de Pagamento"] || "" },
 ];
 
 function formatDate(raw) {
