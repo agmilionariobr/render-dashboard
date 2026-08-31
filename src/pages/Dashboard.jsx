@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { listFunnels, listAllKanbanItems, logout } from "../lib/chatwoot";
-import { enrichItemsWithCustomAttributes, filterByPeriod, exportToExcel, RENDER_EXPORT_COLUMNS } from "../lib/export";
+import { filterByPeriod, exportToExcel, RENDER_EXPORT_COLUMNS } from "../lib/export";
 
 const B = { cyan: "#01c9f0", teal: "#07739e", navy: "#09092b" };
 
@@ -34,11 +34,24 @@ function periodToRange(periodKey, customStart, customEnd) {
   return { startDate: null, endDate: null };
 }
 
+// Reconstroi o mapa { nome: valor } dos custom_attributes do item, igual export.js,
+// para exibir na tabela em tela também (não só no Excel).
+function getAttrsMap(item) {
+  const list = item.item_details?.custom_attributes;
+  if (!Array.isArray(list)) return {};
+  const map = {};
+  for (const attr of list) {
+    if (!attr?.name) continue;
+    const v = attr.value;
+    map[attr.name] = Array.isArray(v) ? (v.length ? v.join(", ") : "") : v ?? "";
+  }
+  return map;
+}
+
 export default function Dashboard({ accountId, onLogout }) {
   const [funnels, setFunnels] = useState([]);
   const [funnelId, setFunnelId] = useState(null);
-  const [rawItems, setRawItems] = useState([]);
-  const [enrichedItems, setEnrichedItems] = useState([]);
+  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
@@ -62,17 +75,11 @@ export default function Dashboard({ accountId, onLogout }) {
     setError("");
     setProgress({ stage: "kanban", done: 0, total: null });
     try {
-      const items = await listAllKanbanItems({
+      const kanbanItems = await listAllKanbanItems({
         funnelId,
         onProgress: (done, total) => setProgress({ stage: "kanban", done, total }),
       });
-      setRawItems(items);
-
-      setProgress({ stage: "attrs", done: 0, total: items.length });
-      const enriched = await enrichItemsWithCustomAttributes(items, {
-        onProgress: (done, total) => setProgress({ stage: "attrs", done, total }),
-      });
-      setEnrichedItems(enriched);
+      setItems(kanbanItems);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -87,8 +94,8 @@ export default function Dashboard({ accountId, onLogout }) {
 
   const { startDate, endDate } = periodToRange(period, customStart, customEnd);
   const filtered = useMemo(
-    () => filterByPeriod(enrichedItems, { startDate, endDate }),
-    [enrichedItems, startDate, endDate]
+    () => filterByPeriod(items, { startDate, endDate }),
+    [items, startDate, endDate]
   );
 
   const handleExport = () => {
@@ -219,7 +226,7 @@ export default function Dashboard({ accountId, onLogout }) {
               cursor: "pointer",
             }}
           >
-            🔄 Atualizar
+            Atualizar
           </button>
 
           <button
@@ -239,7 +246,7 @@ export default function Dashboard({ accountId, onLogout }) {
               boxShadow: "0 2px 8px rgba(1,201,240,0.25)",
             }}
           >
-            {exporting ? "Gerando..." : `⬇ Exportar Excel (${filtered.length})`}
+            {exporting ? "Gerando..." : `Exportar Excel (${filtered.length})`}
           </button>
         </div>
 
@@ -247,8 +254,6 @@ export default function Dashboard({ accountId, onLogout }) {
           <div style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
             {progress?.stage === "kanban"
               ? `Carregando itens do funil... ${progress.done}${progress.total ? ` / ${progress.total}` : ""}`
-              : progress?.stage === "attrs"
-              ? `Buscando campos customizados... ${progress.done} / ${progress.total}`
               : "Carregando..."}
           </div>
         )}
@@ -286,15 +291,18 @@ export default function Dashboard({ accountId, onLogout }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((item, idx) => (
-                  <tr key={item.id || idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    {RENDER_EXPORT_COLUMNS.map((col) => (
-                      <td key={col.label} style={{ padding: "8px 12px", fontSize: 13, whiteSpace: "nowrap" }}>
-                        {String(col.getValue(item) ?? "")}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {filtered.map((item, idx) => {
+                  const attrs = getAttrsMap(item);
+                  return (
+                    <tr key={item.id || idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      {RENDER_EXPORT_COLUMNS.map((col) => (
+                        <td key={col.label} style={{ padding: "8px 12px", fontSize: 13, whiteSpace: "nowrap" }}>
+                          {String(col.getValue(item, attrs) ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
                 {filtered.length === 0 && (
                   <tr>
                     <td
