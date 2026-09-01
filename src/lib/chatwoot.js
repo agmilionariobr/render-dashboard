@@ -180,8 +180,6 @@ export async function listKanbanItems({ funnelId, stageId, page = 1 } = {}) {
 }
 
 // Busca TODOS os itens de um funil, paginando automaticamente até acabar.
-// (Não filtra por data aqui - o filtro de período é aplicado no cliente,
-// depois de já termos o campo created_at/updated_at de cada card.)
 export async function listAllKanbanItems({ funnelId, stageId, onProgress } = {}) {
   let page = 1;
   let all = [];
@@ -202,6 +200,39 @@ export async function getConversation(conversationId) {
   return request(
     `/api/v1/accounts/${accountId}/conversations/${conversationId}`
   );
+}
+
+// Lista conversas de um inbox específico, uma página por vez.
+export async function listConversations({ inboxId, page = 1 } = {}) {
+  const { accountId } = getAuth();
+  const qs = new URLSearchParams();
+  if (inboxId) qs.set("inbox_id", inboxId);
+  qs.set("status", "all");
+  qs.set("page", page);
+  const data = await request(
+    `/api/v1/accounts/${accountId}/conversations?${qs.toString()}`
+  );
+  return {
+    conversations: data?.data?.payload || data?.payload || [],
+    meta: data?.data?.meta || data?.meta || {},
+  };
+}
+
+// Busca todas as conversas de um inbox, paginando até acabar.
+export async function listAllConversations({ inboxId, onProgress } = {}) {
+  let page = 1;
+  let all = [];
+  while (true) {
+    const { conversations, meta } = await listConversations({ inboxId, page });
+    if (!conversations.length) break;
+    all = all.concat(conversations);
+    if (onProgress) onProgress(all.length, meta?.all_count);
+    if (meta?.all_count && all.length >= meta.all_count) break;
+    if (conversations.length < 25) break;
+    page += 1;
+    if (page > 200) break;
+  }
+  return all;
 }
 
 // Lista as definições de atributos customizados da conta
