@@ -34,8 +34,6 @@ function periodToRange(periodKey, customStart, customEnd) {
   return { startDate: null, endDate: null };
 }
 
-// Reconstroi o mapa { nome: valor } dos custom_attributes do item, igual export.js,
-// para exibir na tabela em tela também (não só no Excel).
 function getAttrsMap(item) {
   const list = item.item_details?.custom_attributes;
   if (!Array.isArray(list)) return {};
@@ -48,7 +46,7 @@ function getAttrsMap(item) {
   return map;
 }
 
-export default function Dashboard({ accountId, onLogout }) {
+export default function Dashboard({ accountId, onLogout, onSwitchAccount }) {
   const [funnels, setFunnels] = useState([]);
   const [funnelId, setFunnelId] = useState(null);
   const [items, setItems] = useState([]);
@@ -134,24 +132,43 @@ export default function Dashboard({ accountId, onLogout }) {
           <h1 style={{ color: "#fff", fontSize: 16, fontWeight: 800 }}>Dashboard de Exportação</h1>
           <p style={{ color: B.cyan, fontSize: 11 }}>MilionCRM • conta {accountId}</p>
         </div>
-        <button
-          onClick={() => {
-            logout();
-            onLogout();
-          }}
-          style={{
-            padding: "6px 14px",
-            background: "rgba(239,68,68,0.1)",
-            color: "#ef4444",
-            border: "1px solid rgba(239,68,68,0.2)",
-            borderRadius: 6,
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          Sair
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {onSwitchAccount && (
+            <button
+              onClick={onSwitchAccount}
+              style={{
+                padding: "6px 14px",
+                background: "rgba(1,201,240,0.1)",
+                color: B.cyan,
+                border: "1px solid rgba(1,201,240,0.25)",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Trocar empresa
+            </button>
+          )}
+          <button
+            onClick={() => {
+              logout();
+              onLogout();
+            }}
+            style={{
+              padding: "6px 14px",
+              background: "rgba(239,68,68,0.1)",
+              color: "#ef4444",
+              border: "1px solid rgba(239,68,68,0.2)",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Sair
+          </button>
+        </div>
       </header>
 
       <div style={{ padding: "20px 24px" }}>
