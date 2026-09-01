@@ -66,5 +66,11 @@ export default function App() {
     );
   }
 
-  return <Dashboard accountId={accountId} onLogout={handleLogout} />;
+  return (
+    <Dashboard
+      accountId={accountId}
+      onLogout={handleLogout}
+      onSwitchAccount={accounts.length > 1 ? () => setAccountId(null) : null}
+    />
+  );
 }
