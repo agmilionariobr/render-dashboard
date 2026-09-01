@@ -3,13 +3,17 @@ import { getAuth, getAccounts, clearAuth } from "./lib/chatwoot";
 import Login from "./pages/Login";
 import AccountSelect from "./pages/AccountSelect";
 import Dashboard from "./pages/Dashboard";
+import LeadsReport from "./pages/LeadsReport";
 
 const B = { navy: "#09092b", cyan: "#01c9f0" };
+
+const LEADS_REPORT_ACCOUNTS = [4];
 
 export default function App() {
   const [auth, setAuth] = useState(null);
   const [accountId, setAccountId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState("dashboard");
 
   useEffect(() => {
     const a = getAuth();
@@ -24,6 +28,12 @@ export default function App() {
     clearAuth();
     setAuth(null);
     setAccountId(null);
+    setPage("dashboard");
+  };
+
+  const handleSwitchAccount = () => {
+    setAccountId(null);
+    setPage("dashboard");
   };
 
   if (loading) {
@@ -66,11 +76,26 @@ export default function App() {
     );
   }
 
+  const switchAccountFn = accounts.length > 1 ? handleSwitchAccount : null;
+  const hasLeadsReport = LEADS_REPORT_ACCOUNTS.includes(Number(accountId));
+
+  if (page === "leads-report" && hasLeadsReport) {
+    return (
+      <LeadsReport
+        accountId={accountId}
+        onLogout={handleLogout}
+        onSwitchAccount={switchAccountFn}
+        onBack={() => setPage("dashboard")}
+      />
+    );
+  }
+
   return (
     <Dashboard
       accountId={accountId}
       onLogout={handleLogout}
-      onSwitchAccount={accounts.length > 1 ? () => setAccountId(null) : null}
+      onSwitchAccount={switchAccountFn}
+      onOpenLeadsReport={hasLeadsReport ? () => setPage("leads-report") : null}
     />
   );
 }
