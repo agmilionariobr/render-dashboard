@@ -46,7 +46,7 @@ function getAttrsMap(item) {
   return map;
 }
 
-export default function Dashboard({ accountId, onLogout, onSwitchAccount }) {
+export default function Dashboard({ accountId, onLogout, onSwitchAccount, onOpenLeadsReport }) {
   const [funnels, setFunnels] = useState([]);
   const [funnelId, setFunnelId] = useState(null);
   const [items, setItems] = useState([]);
@@ -133,6 +133,23 @@ export default function Dashboard({ accountId, onLogout, onSwitchAccount }) {
           <p style={{ color: B.cyan, fontSize: 11 }}>MilionCRM • conta {accountId}</p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          {onOpenLeadsReport && (
+            <button
+              onClick={onOpenLeadsReport}
+              style={{
+                padding: "6px 14px",
+                background: "rgba(1,201,240,0.1)",
+                color: B.cyan,
+                border: "1px solid rgba(1,201,240,0.25)",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Relatório de Leads
+            </button>
+          )}
           {onSwitchAccount && (
             <button
               onClick={onSwitchAccount}
