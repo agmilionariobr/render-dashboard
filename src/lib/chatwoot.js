@@ -23,14 +23,12 @@ export function clearAuth() {
   localStorage.removeItem(STORAGE_KEY);
 }
 
-// troca a empresa/conta ativa (multi-conta na mesma instância)
 export function setActiveAccount(accountId) {
   const a = getAuth();
   if (!a) return;
   setAuth({ ...a, accountId });
 }
 
-// lista de contas/empresas que o usuário tem acesso
 export function getAccounts() {
   const a = getAuth();
   return a?.accounts || [];
@@ -47,7 +45,6 @@ function authHeaders() {
   };
 }
 
-// atualiza tokens rotativos que o Devise devolve a cada request
 function refreshTokensFromResponse(res) {
   const newToken = res.headers.get("access-token");
   if (newToken) {
@@ -163,7 +160,6 @@ export async function listFunnels() {
   return Array.isArray(data) ? data : data?.payload || [];
 }
 
-// Lista os itens (cards) de um funil, paginado.
 export async function listKanbanItems({ funnelId, stageId, page = 1 } = {}) {
   const { accountId } = getAuth();
   const qs = new URLSearchParams();
@@ -179,7 +175,6 @@ export async function listKanbanItems({ funnelId, stageId, page = 1 } = {}) {
   };
 }
 
-// Busca TODOS os itens de um funil, paginando automaticamente até acabar.
 export async function listAllKanbanItems({ funnelId, stageId, onProgress } = {}) {
   let page = 1;
   let all = [];
@@ -202,7 +197,6 @@ export async function getConversation(conversationId) {
   );
 }
 
-// Lista conversas de um inbox específico, uma página por vez.
 export async function listConversations({ inboxId, page = 1 } = {}) {
   const { accountId } = getAuth();
   const qs = new URLSearchParams();
@@ -218,25 +212,40 @@ export async function listConversations({ inboxId, page = 1 } = {}) {
   };
 }
 
-// Busca todas as conversas de um inbox, paginando até acabar.
-export async function listAllConversations({ inboxId, onProgress } = {}) {
-  let page = 1;
-  let all = [];
-  while (true) {
-    const { conversations, meta } = await listConversations({ inboxId, page });
-    if (!conversations.length) break;
-    all = all.concat(conversations);
-    if (onProgress) onProgress(all.length, meta?.all_count);
-    if (meta?.all_count && all.length >= meta.all_count) break;
-    if (conversations.length < 25) break;
-    page += 1;
-    if (page > 200) break;
+// Busca todas as conversas de um inbox, paginando em paralelo (lotes de
+// algumas páginas por vez) para acelerar quando o volume é grande (ex: 1500+).
+export async function listAllConversations({ inboxId, onProgress, concurrency = 5 } = {}) {
+  const first = await listConversations({ inboxId, page: 1 });
+  let all = [...first.conversations];
+  const pageSize = first.conversations.length || 25;
+  const totalCount = first.meta?.all_count;
+
+  if (onProgress) onProgress(all.length, totalCount);
+
+  if (!totalCount || first.conversations.length < pageSize) {
+    return all;
   }
+
+  const totalPages = Math.ceil(totalCount / pageSize);
+  if (totalPages <= 1) return all;
+
+  const remainingPages = [];
+  for (let p = 2; p <= totalPages; p++) remainingPages.push(p);
+
+  for (let i = 0; i < remainingPages.length; i += concurrency) {
+    const batch = remainingPages.slice(i, i + concurrency);
+    const results = await Promise.all(
+      batch.map((p) => listConversations({ inboxId, page: p }))
+    );
+    for (const r of results) {
+      all = all.concat(r.conversations);
+    }
+    if (onProgress) onProgress(all.length, totalCount);
+  }
+
   return all;
 }
 
-// Lista as definições de atributos customizados da conta
-// (nome exibido, chave técnica, tipo, se é de conversa ou contato).
 export async function listCustomAttributeDefinitions() {
   const { accountId } = getAuth();
   const data = await request(
