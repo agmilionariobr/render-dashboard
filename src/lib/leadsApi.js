@@ -15,7 +15,6 @@ function normalizeReport(data) {
       item?.timestamp == null ||
       item?.value == null ||
       !Number.isSafeInteger(timestamp) ||
-      timestamp < 0 ||
       !Number.isSafeInteger(count) ||
       count < 0 ||
       seen.has(timestamp) ||
@@ -32,7 +31,7 @@ function normalizeReport(data) {
 }
 
 // Consulta contagens agregadas, sem baixar os detalhes das conversas.
-// Mantém UTC, a mesma regra de datas usada no relatório anterior.
+// Solicita timezone_offset 0, como nos testes de comparação com o CRM.
 export async function getDailyLeadCounts({
   accountId,
   inboxId,
@@ -117,7 +116,11 @@ export async function getDailyLeadCounts({
       );
     }
 
-    const rows = normalizeReport(await response.json());
+    // Datas anteriores a 1970 também são válidas.
+    // A API pode incluir períodos vazios anteriores ao início solicitado.
+    // Remove somente contagens zero antes de conferir o período.
+    const rows = normalizeReport(await response.json())
+      .filter((row) => row.count > 0);
 
     if (
       rows.some(
