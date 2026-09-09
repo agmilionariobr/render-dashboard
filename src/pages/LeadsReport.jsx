@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { listAllConversations, logout } from "../lib/chatwoot";
+import { logout } from "../lib/chatwoot";
+import { getDailyLeadCounts } from "../lib/leadsApi";
 import {
-  groupByDay,
   filterRowsByPeriod,
   exportLeadsReport,
 } from "../lib/leadsReport";
@@ -30,7 +30,7 @@ export default function LeadsReport({
   const [inboxId, setInboxId] = useState("78");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [progress, setProgress] = useState(null);
+  const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -41,18 +41,21 @@ export default function LeadsReport({
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
 
     async function loadData() {
       setLoading(true);
       setError("");
       setResult(null);
-      setProgress({ done: 0, total: null });
+      setProgress("Conferindo o histórico...");
 
       try {
-        const conversations = await listAllConversations({
+        const rows = await getDailyLeadCounts({
+          accountId,
           inboxId,
-          onProgress: (done, total) => {
-            if (active) setProgress({ done, total });
+          signal: controller.signal,
+          onProgress: (message) => {
+            if (active) setProgress(message);
           },
         });
 
@@ -61,16 +64,16 @@ export default function LeadsReport({
         setResult({
           accountId,
           inboxId,
-          rows: groupByDay(conversations),
+          rows,
         });
       } catch (e) {
-        if (active) {
-          setError(e.message || "Não foi possível carregar as conversas.");
+        if (active && e.name !== "AbortError") {
+          setError(e.message || "Não foi possível carregar o relatório.");
         }
       } finally {
         if (active) {
           setLoading(false);
-          setProgress(null);
+          setProgress("");
         }
       }
     }
@@ -79,6 +82,7 @@ export default function LeadsReport({
 
     return () => {
       active = false;
+      controller.abort();
     };
   }, [accountId, inboxId, reloadKey]);
 
@@ -104,7 +108,7 @@ export default function LeadsReport({
     setLoading(true);
     setError("");
     setResult(null);
-    setProgress(null);
+    setProgress("");
     setInboxId(event.target.value);
   };
 
@@ -112,7 +116,7 @@ export default function LeadsReport({
     setLoading(true);
     setError("");
     setResult(null);
-    setProgress(null);
+    setProgress("");
     setReloadKey((value) => value + 1);
   };
 
@@ -123,6 +127,7 @@ export default function LeadsReport({
 
     try {
       const stamp = new Date().toISOString().slice(0, 10);
+
       exportLeadsReport(
         filtered,
         `leads_por_dia_${selectedInbox.filename}_${stamp}.xlsx`
@@ -318,9 +323,7 @@ export default function LeadsReport({
               fontSize: 13,
             }}
           >
-            Carregando conversas de {selectedInbox.name}...{" "}
-            {progress?.done || 0}
-            {progress?.total ? ` / ${progress.total}` : ""}
+            {selectedInbox.name} — {progress || "Carregando relatório..."}
           </div>
         )}
 
@@ -342,6 +345,7 @@ export default function LeadsReport({
                   <th style={{ ...thStyle, textAlign: "right" }}>Leads</th>
                 </tr>
               </thead>
+
               <tbody>
                 {filtered.map((row) => (
                   <tr
