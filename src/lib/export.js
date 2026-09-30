@@ -1,132 +1,1120 @@
-import * as XLSX from "xlsx";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
 
-// Estrutura real confirmada via teste ao vivo (card "Pancremo", account_id 41):
-// item.item_details.custom_attributes é uma LISTA de objetos { name, type, value },
-// não um objeto simples como era o custom_attributes da conversa.
-// Ex.: [{ name: "Distribuidora", type: "string", value: "TESTE" }, ...]
-//
-// Os campos hoje passaram a viver no CARD do Kanban (não mais na conversa),
-// o que permite existirem mesmo sem conversa vinculada (conversation: null).
+import {
+  listFunnels,
+  listAllKanbanItems,
+  logout,
+} from "../lib/chatwoot";
 
-// Transforma a lista de custom_attributes em um objeto simples { nome: valor },
-// pra facilitar a leitura no resto do código.
-function customAttributesToMap(item) {
-  const list = item.item_details?.custom_attributes;
-  if (!Array.isArray(list)) return {};
-  const map = {};
-  for (const attr of list) {
-    if (!attr?.name) continue;
-    const v = attr.value;
-    map[attr.name] = Array.isArray(v) ? (v.length ? v.join(", ") : "") : v ?? "";
-  }
-  return map;
-}
+import {
+  filterByPeriod,
+  exportToExcel,
+  RENDER_EXPORT_COLUMNS,
+  customAttributesToMap,
+  getAssignedAgentNames,
+  getItemValue,
+} from "../lib/export";
 
-// Filtra itens por período (baseado em created_at do card).
-export function filterByPeriod(items, { startDate, endDate }) {
-  if (!startDate && !endDate) return items;
-  const start = startDate ? new Date(startDate).getTime() : -Infinity;
-  const end = endDate ? new Date(endDate).getTime() + 24 * 60 * 60 * 1000 - 1 : Infinity;
-  return items.filter((item) => {
-    const raw = item.created_at;
-    if (!raw) return true;
-    const ts = typeof raw === "number" ? raw * 1000 : new Date(raw).getTime();
-    return ts >= start && ts <= end;
-  });
-}
+const B = {
+  cyan: "#01c9f0",
+  teal: "#07739e",
+  navy: "#09092b",
+};
 
-// Gera e baixa o arquivo .xlsx a partir dos itens do Kanban.
-export function exportToExcel(items, columns, filename = "export.xlsx") {
-  const rows = items.map((item) => {
-    const attrs = customAttributesToMap(item);
-    const row = {};
-    columns.forEach((col) => {
-      row[col.label] = col.getValue(item, attrs);
-    });
-    return row;
-  });
-
-  const ws = XLSX.utils.json_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Exportação");
-
-  ws["!cols"] = columns.map((col) => ({ wch: Math.max(col.label.length + 2, 14) }));
-
-  XLSX.writeFile(wb, filename);
-}
-
-// Colunas fixas da v1 - Render Economia.
-// Nomes batem exatamente com os "Campos Personalizados do Kanban" criados
-// pelo Wagner no funil GD2 (confirmado ao vivo em 31/08/2026).
-//
-// NOVO (11/09/2026): coluna "Data do Prazo" adicionada logo após "Criado em".
-// Lê item.item_details.deadline_at — campo da aba "Agendamento" do card
-// (formato "YYYY-MM-DD"), DIFERENTE de created_at (data de criação do
-// registro no sistema, sempre automática e não editável). deadline_at é
-// editável manualmente pelo usuário e serve para o caso de um card criado
-// hoje se referir a um negócio de um mês anterior.
-//
-// CORRIGIDO (16/09/2026): coluna "Valor" estava saindo vazia em cards
-// criados a partir de ~04/09/2026. Investigação (comparando payloads reais
-// da API) mostrou que, em algum momento entre 28/08 e 04/09, a estrutura
-// do funil GD2 mudou: cards antigos tinham o valor do negócio direto em
-// item_details.value (número solto); cards novos não têm mais esse campo —
-// o valor passou a viver dentro de custom_attributes, no campo
-// "Valor da Fatura". A função getValue de "Valor" agora tenta primeiro
-// item_details.value (cards antigos) e cai para o campo customizado
-// "Valor da Fatura" quando o primeiro não existir (cards novos), então a
-// coluna funciona para as duas estruturas sem duplicar dado.
-export const RENDER_EXPORT_COLUMNS = [
-  { label: "Título", getValue: (i) => i.item_details?.title || "" },
-  { label: "Etapa", getValue: (i) => i.funnel?.stages?.[i.funnel_stage]?.name || i.funnel_stage || "" },
-  {
-    label: "Valor",
-    getValue: (i, a) => {
-      const legacyValue = i.item_details?.value;
-      if (legacyValue !== undefined && legacyValue !== null && legacyValue !== "") {
-        return legacyValue;
-      }
-      return a["Valor da Fatura"] ?? "";
-    },
-  },
-  { label: "Criado em", getValue: (i) => formatDate(i.created_at) },
-  { label: "Data do Prazo", getValue: (i) => formatDeadline(i.item_details?.deadline_at) },
-  { label: "Canal de Aquisição", getValue: (i, a) => a["Canal de Aquisição"] || "" },
-  { label: "Nome do Parceiro", getValue: (i, a) => a["Nome do Parceiro"] || "" },
-  { label: "Geradora", getValue: (i, a) => a["Geradora"] || "" },
-  { label: "Distribuidora", getValue: (i, a) => a["Distribuidora"] || "" },
-  { label: "Valor da Fatura", getValue: (i, a) => a["Valor da Fatura"] ?? "" },
-  { label: "Comissão Total", getValue: (i, a) => a["Comissão Total"] ?? "" },
-  { label: "Comissão Vendedor", getValue: (i, a) => a["Comissão Vendedor"] ?? "" },
-  { label: "Comissão Parceiro", getValue: (i, a) => a["Comissão Parceiro"] ?? "" },
-  { label: "Modelo de Pagamento", getValue: (i, a) => a["Modelo de Pagamento"] || "" },
+const PERIODS = [
+  { key: "today", label: "Hoje" },
+  { key: "7d", label: "7 dias" },
+  { key: "30d", label: "30 dias" },
+  { key: "month", label: "Este mês" },
+  { key: "custom", label: "Personalizado" },
 ];
 
-function formatDate(raw) {
-  if (!raw) return "";
-  const ts = typeof raw === "number" ? raw * 1000 : new Date(raw).getTime();
-  const d = new Date(ts);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("pt-BR");
+function periodToRange(
+  periodKey,
+  customStart,
+  customEnd
+) {
+  const now = new Date();
+  const end = now
+    .toISOString()
+    .slice(0, 10);
+
+  if (periodKey === "today") {
+    return {
+      startDate: end,
+      endDate: end,
+    };
+  }
+
+  if (periodKey === "7d") {
+    const d = new Date(now);
+
+    d.setDate(d.getDate() - 6);
+
+    return {
+      startDate: d
+        .toISOString()
+        .slice(0, 10),
+      endDate: end,
+    };
+  }
+
+  if (periodKey === "30d") {
+    const d = new Date(now);
+
+    d.setDate(d.getDate() - 29);
+
+    return {
+      startDate: d
+        .toISOString()
+        .slice(0, 10),
+      endDate: end,
+    };
+  }
+
+  if (periodKey === "month") {
+    const d = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      1
+    );
+
+    return {
+      startDate: d
+        .toISOString()
+        .slice(0, 10),
+      endDate: end,
+    };
+  }
+
+  if (periodKey === "custom") {
+    return {
+      startDate: customStart,
+      endDate: customEnd,
+    };
+  }
+
+  return {
+    startDate: null,
+    endDate: null,
+  };
 }
 
-// Formata deadline_at, que pode vir em DOIS formatos diferentes dependendo
-// de quando o card foi criado:
-// - Cards antigos: ISO datetime completo com timezone, ex:
-//   "2026-02-11T13:58:00-03:00"
-// - Cards novos: string simples "YYYY-MM-DD", ex: "2026-08-01"
-// Ambos os casos são cobertos: se tiver "T" na string, tratamos como
-// datetime completo (new Date funciona bem, timezone já vem explícito);
-// caso contrário, fatiamos manualmente para não correr risco de
-// deslocamento de dia por fuso horário do navegador.
-function formatDeadline(raw) {
-  if (!raw) return "";
-  if (raw.includes("T")) {
-    const d = new Date(raw);
-    if (isNaN(d.getTime())) return "";
-    return d.toLocaleDateString("pt-BR");
+function getAttrsMap(item) {
+  return customAttributesToMap(item);
+}
+
+function toNumber(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return 0;
   }
-  const [y, m, d] = raw.split("-");
-  if (!y || !m || !d) return "";
-  return `${d}/${m}/${y}`;
+
+  if (typeof value === "number") {
+    return Number.isFinite(value)
+      ? value
+      : 0;
+  }
+
+  const normalized = String(value)
+    .trim()
+    .replace(/\s/g, "")
+    .replace(/^R\$/, "");
+
+  const number = Number(normalized);
+
+  return Number.isFinite(number)
+    ? number
+    : 0;
+}
+
+function formatCurrency(value) {
+  return Number(value || 0).toLocaleString(
+    "pt-BR",
+    {
+      style: "currency",
+      currency: "BRL",
+    }
+  );
+}
+
+function getStageLabel(item) {
+  const stage =
+    item.funnel?.stages?.[
+      item.funnel_stage
+    ]?.name;
+
+  if (stage) return stage;
+
+  const raw =
+    item.funnel_stage || "Sem etapa";
+
+  const knownStages = {
+    fatura: "Fatura",
+    follow_up: "Follow up",
+    followup: "Follow up",
+    em_tratativa: "Em Tratativa",
+    proposta: "Proposta",
+    reuniao: "Reunião",
+    reuni_o: "Reunião",
+    negociacao: "Negociação",
+    negocia_o: "Negociação",
+    subir_proposta: "Subir Proposta",
+    contrato: "Contrato",
+    stand_by: "Stand-by",
+    neg_cio_fechado: "Negócio fechado",
+    negocio_fechado: "Negócio fechado",
+    neg_cio_perdido: "Negócio perdido",
+    negocio_perdido: "Negócio perdido",
+  };
+
+  if (knownStages[raw]) {
+    return knownStages[raw];
+  }
+
+  return raw
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (l) =>
+      l.toUpperCase()
+    );
+}
+
+export default function Dashboard({
+  accountId,
+  onLogout,
+  onSwitchAccount,
+  onOpenLeadsReport,
+}) {
+  const [funnels, setFunnels] =
+    useState([]);
+
+  const [funnelId, setFunnelId] =
+    useState(null);
+
+  const [items, setItems] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [progress, setProgress] =
+    useState(null);
+
+  const [error, setError] =
+    useState("");
+
+  const [period, setPeriod] =
+    useState("30d");
+
+  const [
+    customStart,
+    setCustomStart,
+  ] = useState("");
+
+  const [
+    customEnd,
+    setCustomEnd,
+  ] = useState("");
+
+  const [exporting, setExporting] =
+    useState(false);
+
+  const [
+    selectedAgent,
+    setSelectedAgent,
+  ] = useState("all");
+
+  useEffect(() => {
+    listFunnels()
+      .then((f) => {
+        setFunnels(f);
+
+        if (f.length > 0) {
+          setFunnelId(f[0].id);
+        }
+      })
+      .catch((e) =>
+        setError(e.message)
+      );
+  }, []);
+
+  const loadData =
+    useCallback(async () => {
+      if (!funnelId) return;
+
+      setLoading(true);
+      setError("");
+
+      setProgress({
+        stage: "kanban",
+        done: 0,
+        total: null,
+      });
+
+      try {
+        const kanbanItems =
+          await listAllKanbanItems({
+            funnelId,
+
+            onProgress: (
+              done,
+              total
+            ) =>
+              setProgress({
+                stage: "kanban",
+                done,
+                total,
+              }),
+          });
+
+        setItems(kanbanItems);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
+        setProgress(null);
+      }
+    }, [funnelId]);
+
+  useEffect(() => {
+    if (funnelId) {
+      loadData();
+    }
+  }, [funnelId, loadData]);
+
+  // Ao trocar de funil, evita manter
+  // um agente que não existe no novo funil.
+  useEffect(() => {
+    setSelectedAgent("all");
+  }, [funnelId]);
+
+  const {
+    startDate,
+    endDate,
+  } = periodToRange(
+    period,
+    customStart,
+    customEnd
+  );
+
+  // Primeiro mantém exatamente
+  // o filtro de período já existente.
+  const periodFiltered = useMemo(
+    () =>
+      filterByPeriod(items, {
+        startDate,
+        endDate,
+      }),
+    [
+      items,
+      startDate,
+      endDate,
+    ]
+  );
+
+  // Lista de agentes encontrada diretamente
+  // nos cards retornados pela API.
+  const availableAgents = useMemo(() => {
+    const names = new Set();
+
+    items.forEach((item) => {
+      getAssignedAgentNames(
+        item
+      ).forEach((name) =>
+        names.add(name)
+      );
+    });
+
+    return Array.from(names).sort(
+      (a, b) =>
+        a.localeCompare(
+          b,
+          "pt-BR"
+        )
+    );
+  }, [items]);
+
+  // Aplica o novo filtro por agente
+  // depois do período.
+  const filtered = useMemo(() => {
+    if (
+      selectedAgent === "all"
+    ) {
+      return periodFiltered;
+    }
+
+    return periodFiltered.filter(
+      (item) =>
+        getAssignedAgentNames(
+          item
+        ).includes(selectedAgent)
+    );
+  }, [
+    periodFiltered,
+    selectedAgent,
+  ]);
+
+  // Calcula total geral e total por etapa.
+  const summary = useMemo(() => {
+    const stages = new Map();
+
+    let totalValue = 0;
+
+    filtered.forEach((item) => {
+      const attrs =
+        getAttrsMap(item);
+
+      const value = toNumber(
+        getItemValue(
+          item,
+          attrs
+        )
+      );
+
+      totalValue += value;
+
+      const stageKey =
+        item.funnel_stage ||
+        "sem_etapa";
+
+      const label =
+        getStageLabel(item);
+
+      if (!stages.has(stageKey)) {
+        stages.set(stageKey, {
+          key: stageKey,
+          label,
+          count: 0,
+          value: 0,
+        });
+      }
+
+      const stage =
+        stages.get(stageKey);
+
+      stage.count += 1;
+      stage.value += value;
+    });
+
+    return {
+      totalCards: filtered.length,
+      totalValue,
+      stages: Array.from(
+        stages.values()
+      ),
+    };
+  }, [filtered]);
+
+  const handleExport = () => {
+    setExporting(true);
+
+    try {
+      const stamp = new Date()
+        .toISOString()
+        .slice(0, 10);
+
+      exportToExcel(
+        filtered,
+        RENDER_EXPORT_COLUMNS,
+        `export_render_${stamp}.xlsx`
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const btnS = (active) => ({
+    padding: "8px 14px",
+    borderRadius: 8,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+
+    border: active
+      ? `2px solid ${B.cyan}`
+      : "1px solid #e2e8f0",
+
+    background: active
+      ? "rgba(1,201,240,0.08)"
+      : "#fff",
+
+    color: active
+      ? B.teal
+      : "#64748b",
+  });
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#f8fafc",
+      }}
+    >
+      <header
+        style={{
+          background: B.navy,
+          padding: "14px 24px",
+          display: "flex",
+          justifyContent:
+            "space-between",
+          alignItems: "center",
+        }}
+      >
+        <div>
+          <h1
+            style={{
+              color: "#fff",
+              fontSize: 16,
+              fontWeight: 800,
+            }}
+          >
+            Dashboard de Exportação
+          </h1>
+
+          <p
+            style={{
+              color: B.cyan,
+              fontSize: 11,
+            }}
+          >
+            MilionCRM • conta{" "}
+            {accountId}
+          </p>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+          }}
+        >
+          {onOpenLeadsReport && (
+            <button
+              onClick={
+                onOpenLeadsReport
+              }
+              style={{
+                padding:
+                  "6px 14px",
+                background:
+                  "rgba(1,201,240,0.1)",
+                color: B.cyan,
+                border:
+                  "1px solid rgba(1,201,240,0.25)",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Relatório de Leads
+            </button>
+          )}
+
+          {onSwitchAccount && (
+            <button
+              onClick={
+                onSwitchAccount
+              }
+              style={{
+                padding:
+                  "6px 14px",
+                background:
+                  "rgba(1,201,240,0.1)",
+                color: B.cyan,
+                border:
+                  "1px solid rgba(1,201,240,0.25)",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Trocar empresa
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              logout();
+              onLogout();
+            }}
+            style={{
+              padding: "6px 14px",
+              background:
+                "rgba(239,68,68,0.1)",
+              color: "#ef4444",
+              border:
+                "1px solid rgba(239,68,68,0.2)",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Sair
+          </button>
+        </div>
+      </header>
+
+      <div
+        style={{
+          padding: "20px 24px",
+        }}
+      >
+        {error && (
+          <div
+            style={{
+              background:
+                "rgba(239,68,68,0.08)",
+              border:
+                "1px solid rgba(239,68,68,0.2)",
+              borderRadius: 8,
+              padding: "10px 14px",
+              marginBottom: 16,
+              color: "#ef4444",
+              fontSize: 13,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "center",
+            marginBottom: 16,
+          }}
+        >
+          {funnels.length > 1 && (
+            <select
+              value={funnelId || ""}
+              onChange={(e) =>
+                setFunnelId(
+                  e.target.value
+                )
+              }
+              style={{
+                padding:
+                  "8px 12px",
+                borderRadius: 8,
+                border:
+                  "1px solid #e2e8f0",
+                fontSize: 13,
+              }}
+            >
+              {funnels.map((f) => (
+                <option
+                  key={f.id}
+                  value={f.id}
+                >
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <select
+            value={selectedAgent}
+            onChange={(e) =>
+              setSelectedAgent(
+                e.target.value
+              )
+            }
+            style={{
+              padding: "8px 12px",
+              borderRadius: 8,
+              border:
+                "1px solid #e2e8f0",
+              fontSize: 13,
+              background: "#fff",
+              minWidth: 180,
+            }}
+          >
+            <option value="all">
+              Todos os agentes
+            </option>
+
+            {availableAgents.map(
+              (agent) => (
+                <option
+                  key={agent}
+                  value={agent}
+                >
+                  {agent}
+                </option>
+              )
+            )}
+          </select>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+            }}
+          >
+            {PERIODS.map((p) => (
+              <button
+                key={p.key}
+                onClick={() =>
+                  setPeriod(p.key)
+                }
+                style={btnS(
+                  period === p.key
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {period === "custom" && (
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems:
+                  "center",
+              }}
+            >
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e) =>
+                  setCustomStart(
+                    e.target.value
+                  )
+                }
+                style={{
+                  padding:
+                    "7px 10px",
+                  borderRadius: 8,
+                  border:
+                    "1px solid #e2e8f0",
+                  fontSize: 13,
+                }}
+              />
+
+              <span
+                style={{
+                  color: "#94a3b8",
+                  fontSize: 13,
+                }}
+              >
+                até
+              </span>
+
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e) =>
+                  setCustomEnd(
+                    e.target.value
+                  )
+                }
+                style={{
+                  padding:
+                    "7px 10px",
+                  borderRadius: 8,
+                  border:
+                    "1px solid #e2e8f0",
+                  fontSize: 13,
+                }}
+              />
+            </div>
+          )}
+
+          <button
+            onClick={loadData}
+            disabled={loading}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 600,
+              background: "#f1f5f9",
+              border:
+                "1px solid #e2e8f0",
+              color: "#475569",
+              cursor: "pointer",
+            }}
+          >
+            Atualizar
+          </button>
+
+          <button
+            onClick={handleExport}
+            disabled={
+              loading ||
+              exporting ||
+              filtered.length === 0
+            }
+            style={{
+              marginLeft: "auto",
+              padding:
+                "10px 20px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 700,
+              border: "none",
+
+              cursor:
+                filtered.length === 0
+                  ? "not-allowed"
+                  : "pointer",
+
+              opacity:
+                filtered.length === 0
+                  ? 0.5
+                  : 1,
+
+              background: `linear-gradient(135deg, ${B.cyan}, ${B.teal})`,
+              color: "#fff",
+
+              boxShadow:
+                "0 2px 8px rgba(1,201,240,0.25)",
+            }}
+          >
+            {exporting
+              ? "Gerando..."
+              : `Exportar Excel (${filtered.length})`}
+          </button>
+        </div>
+
+        {loading && (
+          <div
+            style={{
+              padding: 40,
+              textAlign: "center",
+              color: "#94a3b8",
+              fontSize: 13,
+            }}
+          >
+            {progress?.stage ===
+            "kanban"
+              ? `Carregando itens do funil... ${progress.done}${
+                  progress.total
+                    ? ` / ${progress.total}`
+                    : ""
+                }`
+              : "Carregando..."}
+          </div>
+        )}
+
+        {!loading && (
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 12,
+                marginBottom: 16,
+              }}
+            >
+              <div
+                style={{
+                  background: "#fff",
+                  border:
+                    "1px solid #e2e8f0",
+                  borderRadius: 12,
+                  padding: 16,
+                }}
+              >
+                <div
+                  style={{
+                    color: "#64748b",
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  Total de negócios
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 4,
+                    color: B.navy,
+                    fontSize: 24,
+                    fontWeight: 800,
+                  }}
+                >
+                  {summary.totalCards}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: "#fff",
+                  border:
+                    "1px solid #e2e8f0",
+                  borderRadius: 12,
+                  padding: 16,
+                }}
+              >
+                <div
+                  style={{
+                    color: "#64748b",
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  Valor total
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 4,
+                    color: B.teal,
+                    fontSize: 24,
+                    fontWeight: 800,
+                  }}
+                >
+                  {formatCurrency(
+                    summary.totalValue
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {summary.stages.length >
+              0 && (
+              <div
+                style={{
+                  background: "#fff",
+                  border:
+                    "1px solid #e2e8f0",
+                  borderRadius: 12,
+                  padding: 16,
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 800,
+                    color: B.navy,
+                    marginBottom: 12,
+                  }}
+                >
+                  Resumo por etapa
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(180px, 1fr))",
+                    gap: 10,
+                  }}
+                >
+                  {summary.stages.map(
+                    (stage) => (
+                      <div
+                        key={
+                          stage.key
+                        }
+                        style={{
+                          border:
+                            "1px solid #e2e8f0",
+                          borderRadius: 10,
+                          padding:
+                            "12px 14px",
+                          background:
+                            "#f8fafc",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color:
+                              "#475569",
+                          }}
+                        >
+                          {stage.label}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 6,
+                            fontSize: 13,
+                            color:
+                              "#64748b",
+                          }}
+                        >
+                          {stage.count}{" "}
+                          {stage.count ===
+                          1
+                            ? "negócio"
+                            : "negócios"}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 3,
+                            fontSize: 15,
+                            fontWeight: 800,
+                            color: B.teal,
+                          }}
+                        >
+                          {formatCurrency(
+                            stage.value
+                          )}
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div
+              style={{
+                background: "#fff",
+                borderRadius: 12,
+                border:
+                  "1px solid #e2e8f0",
+                overflow: "auto",
+
+                boxShadow:
+                  "0 1px 3px rgba(0,0,0,0.04)",
+              }}
+            >
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse:
+                    "collapse",
+                }}
+              >
+                <thead>
+                  <tr
+                    style={{
+                      background:
+                        "#f8fafc",
+                    }}
+                  >
+                    {RENDER_EXPORT_COLUMNS.map(
+                      (col) => (
+                        <th
+                          key={
+                            col.label
+                          }
+                          style={{
+                            padding:
+                              "10px 12px",
+                            textAlign:
+                              "left",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color:
+                              "#64748b",
+                            textTransform:
+                              "uppercase",
+                            borderBottom:
+                              "2px solid #e2e8f0",
+                            whiteSpace:
+                              "nowrap",
+                          }}
+                        >
+                          {col.label}
+                        </th>
+                      )
+                    )}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filtered.map(
+                    (item, idx) => {
+                      const attrs =
+                        getAttrsMap(
+                          item
+                        );
+
+                      return (
+                        <tr
+                          key={
+                            item.id ||
+                            idx
+                          }
+                          style={{
+                            borderBottom:
+                              "1px solid #f1f5f9",
+                          }}
+                        >
+                          {RENDER_EXPORT_COLUMNS.map(
+                            (
+                              col
+                            ) => (
+                              <td
+                                key={
+                                  col.label
+                                }
+                                style={{
+                                  padding:
+                                    "8px 12px",
+                                  fontSize: 13,
+                                  whiteSpace:
+                                    "nowrap",
+                                }}
+                              >
+                                {String(
+                                  col.getValue(
+                                    item,
+                                    attrs
+                                  ) ??
+                                    ""
+                                )}
+                              </td>
+                            )
+                          )}
+                        </tr>
+                      );
+                    }
+                  )}
+
+                  {filtered.length ===
+                    0 && (
+                    <tr>
+                      <td
+                        colSpan={
+                          RENDER_EXPORT_COLUMNS.length
+                        }
+                        style={{
+                          padding: 40,
+                          textAlign:
+                            "center",
+                          color:
+                            "#94a3b8",
+                          fontSize: 14,
+                        }}
+                      >
+                        Nenhum item
+                        encontrado com
+                        os filtros
+                        selecionados.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
