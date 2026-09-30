@@ -298,7 +298,6 @@ export default function Dashboard({
         });
       }
 
-      // Remove eventual duplicidade entre respostas
       const uniqueItems =
         Array.from(
           new Map(
@@ -578,9 +577,9 @@ export default function Dashboard({
           )}
 
           <button
-           onClick={async () => {
-           await logout();
-           onLogout();
+            onClick={() => {
+              logout();
+              onLogout();
             }}
             style={{
               padding: "6px 14px",
