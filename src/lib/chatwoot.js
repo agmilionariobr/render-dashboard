@@ -269,50 +269,9 @@ export async function login(
   return auth;
 }
 
-export async function logout() {
-  const auth = getAuth();
-
-  try {
-    if (
-      auth?.accessToken &&
-      auth?.client &&
-      auth?.uid
-    ) {
-      await fetch(
-        `${BASE}/auth/sign_out`,
-        {
-          method: "DELETE",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-
-            "access-token":
-              auth.accessToken,
-
-            client:
-              auth.client,
-
-            uid:
-              auth.uid,
-
-            "token-type":
-              "Bearer",
-          },
-
-          credentials: "omit",
-        }
-      );
-    }
-  } catch (error) {
-    console.warn(
-      "Não foi possível encerrar a sessão no servidor:",
-      error
-    );
-  } finally {
-    clearAuth();
-    clearSiteCookies();
-  }
+export function logout() {
+  clearAuth();
+  clearSiteCookies();
 }
 
 function clearSiteCookies() {
