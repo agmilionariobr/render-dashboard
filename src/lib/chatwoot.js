@@ -9,14 +9,19 @@ const STORAGE_KEY = "crm_dashboard_auth";
 
 export function getAuth() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    return JSON.parse(
+      localStorage.getItem(STORAGE_KEY) || "null"
+    );
   } catch {
     return null;
   }
 }
 
 export function setAuth(auth) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(auth)
+  );
 }
 
 export function clearAuth() {
@@ -25,17 +30,24 @@ export function clearAuth() {
 
 export function setActiveAccount(accountId) {
   const a = getAuth();
+
   if (!a) return;
-  setAuth({ ...a, accountId });
+
+  setAuth({
+    ...a,
+    accountId,
+  });
 }
 
 export function getAccounts() {
   const a = getAuth();
+
   return a?.accounts || [];
 }
 
 function authHeaders() {
   const a = getAuth();
+
   if (!a) return {};
 
   return {
@@ -47,7 +59,8 @@ function authHeaders() {
 }
 
 function refreshTokensFromResponse(res) {
-  const newToken = res.headers.get("access-token");
+  const newToken =
+    res.headers.get("access-token");
 
   if (newToken) {
     const a = getAuth();
@@ -56,22 +69,36 @@ function refreshTokensFromResponse(res) {
       setAuth({
         ...a,
         accessToken: newToken,
-        client: res.headers.get("client") || a.client,
-        uid: res.headers.get("uid") || a.uid,
+        client:
+          res.headers.get("client") ||
+          a.client,
+        uid:
+          res.headers.get("uid") ||
+          a.uid,
       });
     }
   }
 }
 
-async function request(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-      ...(options.headers || {}),
-    },
-  });
+async function request(
+  path,
+  options = {}
+) {
+  const res = await fetch(
+    `${BASE}${path}`,
+    {
+      ...options,
+
+      headers: {
+        "Content-Type":
+          "application/json",
+
+        ...authHeaders(),
+
+        ...(options.headers || {}),
+      },
+    }
+  );
 
   refreshTokensFromResponse(res);
 
@@ -81,15 +108,20 @@ async function request(path, options = {}) {
     const error = new Error(
       "Sua sessão expirou. Saia e entre novamente."
     );
+
     error.status = 401;
+
     throw error;
   }
 
   const text = await res.text();
+
   let data = null;
 
   try {
-    data = text ? JSON.parse(text) : null;
+    data = text
+      ? JSON.parse(text)
+      : null;
   } catch {
     if (res.ok) {
       throw new Error(
@@ -99,19 +131,31 @@ async function request(path, options = {}) {
   }
 
   if (!res.ok) {
-    const error = new Error(data?.message || `Erro ${res.status}`);
+    const error = new Error(
+      data?.message ||
+        `Erro ${res.status}`
+    );
+
     error.status = res.status;
 
-    const retryAfter = res.headers.get("retry-after");
+    const retryAfter =
+      res.headers.get("retry-after");
 
     if (retryAfter) {
-      const seconds = Number(retryAfter);
-      const waitMs = Number.isFinite(seconds)
-        ? seconds * 1000
-        : Date.parse(retryAfter) - Date.now();
+      const seconds =
+        Number(retryAfter);
 
-      if (Number.isFinite(waitMs)) {
-        error.retryAfterMs = Math.max(0, waitMs);
+      const waitMs =
+        Number.isFinite(seconds)
+          ? seconds * 1000
+          : Date.parse(retryAfter) -
+            Date.now();
+
+      if (
+        Number.isFinite(waitMs)
+      ) {
+        error.retryAfterMs =
+          Math.max(0, waitMs);
       }
     }
 
@@ -123,21 +167,40 @@ async function request(path, options = {}) {
 
 // ---------- autenticação ----------
 
-export async function login(email, password) {
-  const res = await fetch(`${BASE}/auth/sign_in`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-    credentials: "omit",
-  });
+export async function login(
+  email,
+  password
+) {
+  const res = await fetch(
+    `${BASE}/auth/sign_in`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type":
+          "application/json",
+      },
+
+      body: JSON.stringify({
+        email,
+        password,
+      }),
+
+      credentials: "omit",
+    }
+  );
 
   if (!res.ok) {
     const t = await res.text();
+
     let msg;
 
     if (res.status === 401) {
-      msg = "Login ou senha inválidos";
-    } else if (res.status === 409) {
+      msg =
+        "Login ou senha inválidos";
+    } else if (
+      res.status === 409
+    ) {
       msg =
         "Já existe uma sessão ativa. Saia do MilionCRM em outros dispositivos ou limpe os dados do site e tente de novo.";
     } else {
@@ -146,65 +209,148 @@ export async function login(email, password) {
 
     try {
       const j = JSON.parse(t);
-      msg = j.errors?.[0] || j.message || msg;
+
+      msg =
+        j.errors?.[0] ||
+        j.message ||
+        msg;
     } catch {}
 
     throw new Error(msg);
   }
 
   const body = await res.json();
+
   const user = body.data;
-  const accounts = user.accounts || [];
-  const autoAccountId = accounts.length === 1 ? accounts[0].id : null;
+
+  const accounts =
+    user.accounts || [];
+
+  const autoAccountId =
+    accounts.length === 1
+      ? accounts[0].id
+      : null;
 
   const auth = {
-    accessToken: res.headers.get("access-token"),
-    client: res.headers.get("client"),
-    uid: res.headers.get("uid"),
-    accountId: autoAccountId,
+    accessToken:
+      res.headers.get(
+        "access-token"
+      ),
+
+    client:
+      res.headers.get("client"),
+
+    uid:
+      res.headers.get("uid"),
+
+    accountId:
+      autoAccountId,
+
     userId: user.id,
+
     name: user.name,
+
     email: user.email,
-    avatarUrl: user.avatar_url,
+
+    avatarUrl:
+      user.avatar_url,
+
     accounts,
   };
 
   if (!auth.accessToken) {
-    throw new Error("Servidor não retornou token de acesso");
+    throw new Error(
+      "Servidor não retornou token de acesso"
+    );
   }
 
   setAuth(auth);
+
   return auth;
 }
 
-export function logout() {
-  clearAuth();
-  clearSiteCookies();
+export async function logout() {
+  const auth = getAuth();
+
+  try {
+    if (
+      auth?.accessToken &&
+      auth?.client &&
+      auth?.uid
+    ) {
+      await fetch(
+        `${BASE}/auth/sign_out`,
+        {
+          method: "DELETE",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            "access-token":
+              auth.accessToken,
+
+            client:
+              auth.client,
+
+            uid:
+              auth.uid,
+
+            "token-type":
+              "Bearer",
+          },
+
+          credentials: "omit",
+        }
+      );
+    }
+  } catch (error) {
+    console.warn(
+      "Não foi possível encerrar a sessão no servidor:",
+      error
+    );
+  } finally {
+    clearAuth();
+    clearSiteCookies();
+  }
 }
 
 function clearSiteCookies() {
   try {
-    document.cookie.split(";").forEach((c) => {
-      const name = c.split("=")[0].trim();
-      if (!name) return;
+    document.cookie
+      .split(";")
+      .forEach((c) => {
+        const name =
+          c
+            .split("=")[0]
+            .trim();
 
-      document.cookie =
-        `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
-      document.cookie =
-        `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/api`;
-    });
+        if (!name) return;
+
+        document.cookie =
+          `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+
+        document.cookie =
+          `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/api`;
+      });
   } catch {}
 }
 
 // ---------- Kanban / funis ----------
 
 export async function listFunnels() {
-  const { accountId } = getAuth();
-  const data = await request(
-    `/api/v1/accounts/${accountId}/funnels`
-  );
+  const {
+    accountId,
+  } = getAuth();
 
-  return Array.isArray(data) ? data : data?.payload || [];
+  const data =
+    await request(
+      `/api/v1/accounts/${accountId}/funnels`
+    );
+
+  return Array.isArray(data)
+    ? data
+    : data?.payload || [];
 }
 
 export async function listKanbanItems({
@@ -212,20 +358,45 @@ export async function listKanbanItems({
   stageId,
   page = 1,
 } = {}) {
-  const { accountId } = getAuth();
-  const qs = new URLSearchParams();
+  const {
+    accountId,
+  } = getAuth();
 
-  if (funnelId) qs.set("funnel_id", funnelId);
-  if (stageId) qs.set("stage_id", stageId);
-  qs.set("page", page);
+  const qs =
+    new URLSearchParams();
 
-  const data = await request(
-    `/api/v1/accounts/${accountId}/kanban_items?${qs.toString()}`
+  if (funnelId) {
+    qs.set(
+      "funnel_id",
+      funnelId
+    );
+  }
+
+  if (stageId) {
+    qs.set(
+      "stage_id",
+      stageId
+    );
+  }
+
+  qs.set(
+    "page",
+    page
   );
 
+  const data =
+    await request(
+      `/api/v1/accounts/${accountId}/kanban_items?${qs.toString()}`
+    );
+
   return {
-    items: data?.items || data?.payload || [],
-    pagination: data?.pagination || {},
+    items:
+      data?.items ||
+      data?.payload ||
+      [],
+
+    pagination:
+      data?.pagination || {},
   };
 }
 
@@ -235,23 +406,41 @@ export async function listAllKanbanItems({
   onProgress,
 } = {}) {
   let page = 1;
+
   let all = [];
 
   while (true) {
-    const { items, pagination } = await listKanbanItems({
-      funnelId,
-      stageId,
-      page,
-    });
+    const {
+      items,
+      pagination,
+    } =
+      await listKanbanItems({
+        funnelId,
+        stageId,
+        page,
+      });
 
-    all = all.concat(items);
+    all =
+      all.concat(items);
 
     if (onProgress) {
-      onProgress(all.length, pagination?.total_count);
+      onProgress(
+        all.length,
+        pagination?.total_count
+      );
     }
 
-    const totalPages = pagination?.total_pages || 1;
-    if (page >= totalPages || items.length === 0) break;
+    const totalPages =
+      pagination?.total_pages ||
+      1;
+
+    if (
+      page >= totalPages ||
+      items.length === 0
+    ) {
+      break;
+    }
+
     page += 1;
   }
 
@@ -260,8 +449,12 @@ export async function listAllKanbanItems({
 
 // ---------- conversas / atributos customizados ----------
 
-export async function getConversation(conversationId) {
-  const { accountId } = getAuth();
+export async function getConversation(
+  conversationId
+) {
+  const {
+    accountId,
+  } = getAuth();
 
   return request(
     `/api/v1/accounts/${accountId}/conversations/${conversationId}`
@@ -272,25 +465,49 @@ export async function listConversations({
   inboxId,
   page = 1,
 } = {}) {
-  const accountId = getAuth()?.accountId;
+  const accountId =
+    getAuth()?.accountId;
 
   if (!accountId) {
-    throw new Error("Entre novamente e selecione a empresa.");
+    throw new Error(
+      "Entre novamente e selecione a empresa."
+    );
   }
 
-  const qs = new URLSearchParams();
+  const qs =
+    new URLSearchParams();
 
-  if (inboxId) qs.set("inbox_id", inboxId);
-  qs.set("status", "all");
-  qs.set("page", page);
+  if (inboxId) {
+    qs.set(
+      "inbox_id",
+      inboxId
+    );
+  }
 
-  const data = await request(
-    `/api/v1/accounts/${accountId}/conversations?${qs.toString()}`
+  qs.set(
+    "status",
+    "all"
   );
 
-  const conversations = data?.data?.payload ?? data?.payload;
+  qs.set(
+    "page",
+    page
+  );
 
-  if (!Array.isArray(conversations)) {
+  const data =
+    await request(
+      `/api/v1/accounts/${accountId}/conversations?${qs.toString()}`
+    );
+
+  const conversations =
+    data?.data?.payload ??
+    data?.payload;
+
+  if (
+    !Array.isArray(
+      conversations
+    )
+  ) {
     throw new Error(
       "A API não retornou uma lista válida de conversas."
     );
@@ -298,54 +515,99 @@ export async function listConversations({
 
   return {
     conversations,
-    meta: data?.data?.meta || data?.meta || {},
+
+    meta:
+      data?.data?.meta ||
+      data?.meta ||
+      {},
   };
 }
 
 // Repete apenas consultas de leitura com falhas temporárias.
-const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
-const MAX_ATTEMPTS = 4;
-const wait = (ms) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
 
-async function readConversationPage({ inboxId, page, session }) {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+const RETRYABLE_STATUS =
+  new Set([
+    408,
+    429,
+    500,
+    502,
+    503,
+    504,
+  ]);
+
+const MAX_ATTEMPTS = 4;
+
+const wait = (ms) =>
+  new Promise((resolve) =>
+    setTimeout(resolve, ms)
+  );
+
+async function readConversationPage({
+  inboxId,
+  page,
+  session,
+}) {
+  for (
+    let attempt = 1;
+    attempt <= MAX_ATTEMPTS;
+    attempt++
+  ) {
     try {
-      const current = getAuth();
+      const current =
+        getAuth();
 
       if (
         !current ||
-        current.accountId !== session.accountId ||
-        current.uid !== session.uid
+        current.accountId !==
+          session.accountId ||
+        current.uid !==
+          session.uid
       ) {
         throw new Error(
           "A sessão ou empresa mudou. Abra o relatório novamente."
         );
       }
 
-      return await listConversations({ inboxId, page });
+      return await listConversations({
+        inboxId,
+        page,
+      });
     } catch (error) {
       const temporary =
-        RETRYABLE_STATUS.has(error.status) ||
-        (error instanceof TypeError && !error.status);
+        RETRYABLE_STATUS.has(
+          error.status
+        ) ||
+        (
+          error instanceof
+            TypeError &&
+          !error.status
+        );
 
-      if (!temporary || attempt === MAX_ATTEMPTS) {
-        const status = error.status
-          ? ` HTTP ${error.status}.`
-          : "";
+      if (
+        !temporary ||
+        attempt ===
+          MAX_ATTEMPTS
+      ) {
+        const status =
+          error.status
+            ? ` HTTP ${error.status}.`
+            : "";
 
         throw new Error(
           `Falha na caixa ${inboxId}, página ${page}, após ${attempt} tentativa(s).` +
-          `${status} ${error.message} O relatório não foi concluído.`
+            `${status} ${error.message} O relatório não foi concluído.`
         );
       }
 
-      // Pausas de 1, 2 e 4 segundos entre as tentativas.
-      // Respeita uma pausa maior quando solicitada pela API.
-      const delay = Math.max(
-        1000 * 2 ** (attempt - 1),
-        error.retryAfterMs || 0
-      );
+      const delay =
+        Math.max(
+          1000 *
+            2 **
+              (attempt - 1),
+
+          error.retryAfterMs ||
+            0
+        );
 
       await wait(delay);
     }
@@ -353,37 +615,66 @@ async function readConversationPage({ inboxId, page, session }) {
 }
 
 // No máximo duas páginas simultâneas.
-// Durante as tentativas automáticas, repete apenas a página
-// que falhou e mantém as páginas concluídas nesta execução.
+
 export async function listAllConversations({
   inboxId,
   onProgress,
   concurrency = 2,
 } = {}) {
-  const session = getAuth();
+  const session =
+    getAuth();
 
-  if (!session?.accountId) {
-    throw new Error("Entre novamente e selecione a empresa.");
+  if (
+    !session?.accountId
+  ) {
+    throw new Error(
+      "Entre novamente e selecione a empresa."
+    );
   }
 
-  const batchSize = Math.max(
-    1,
-    Math.min(2, Math.floor(Number(concurrency)) || 2)
-  );
+  const batchSize =
+    Math.max(
+      1,
+      Math.min(
+        2,
+        Math.floor(
+          Number(
+            concurrency
+          )
+        ) || 2
+      )
+    );
 
-  const readPage = (page) =>
-    readConversationPage({ inboxId, page, session });
+  const readPage =
+    (page) =>
+      readConversationPage({
+        inboxId,
+        page,
+        session,
+      });
 
-  const first = await readPage(1);
-  let all = [...first.conversations];
+  const first =
+    await readPage(1);
 
-  const pageSize = first.conversations.length || 25;
-  const rawTotal = first.meta?.all_count;
-  const totalCount = Number(rawTotal);
+  let all = [
+    ...first.conversations,
+  ];
+
+  const pageSize =
+    first.conversations
+      .length || 25;
+
+  const rawTotal =
+    first.meta?.all_count;
+
+  const totalCount =
+    Number(rawTotal);
 
   if (
     rawTotal == null ||
-    !Number.isInteger(totalCount) ||
+    !Number.isInteger(
+      totalCount
+    ) ||
     totalCount < 0
   ) {
     throw new Error(
@@ -391,66 +682,140 @@ export async function listAllConversations({
     );
   }
 
-  if (onProgress) onProgress(all.length, totalCount);
+  if (onProgress) {
+    onProgress(
+      all.length,
+      totalCount
+    );
+  }
 
-  if (first.conversations.length === 0) {
-    if (totalCount === 0) return [];
+  if (
+    first.conversations
+      .length === 0
+  ) {
+    if (
+      totalCount === 0
+    ) {
+      return [];
+    }
 
     throw new Error(
       `A caixa ${inboxId} informou ${totalCount} conversas, mas a página 1 veio vazia.`
     );
   }
 
-  const totalPages = Math.ceil(totalCount / pageSize);
-  if (totalPages <= 1) return all;
-
-  const remainingPages = [];
-
-  for (let p = 2; p <= totalPages; p++) {
-    remainingPages.push(p);
-  }
-
-  for (let i = 0; i < remainingPages.length; i += batchSize) {
-    const batch = remainingPages.slice(i, i + batchSize);
-    const results = await Promise.allSettled(batch.map(readPage));
-
-    const failed = results.find(
-      (result) => result.status === "rejected"
+  const totalPages =
+    Math.ceil(
+      totalCount /
+        pageSize
     );
 
-    if (failed) throw failed.reason;
+  if (
+    totalPages <= 1
+  ) {
+    return all;
+  }
 
-    for (let index = 0; index < results.length; index++) {
-      const conversations = results[index].value.conversations;
+  const remainingPages =
+    [];
 
-      if (conversations.length === 0) {
+  for (
+    let p = 2;
+    p <= totalPages;
+    p++
+  ) {
+    remainingPages.push(
+      p
+    );
+  }
+
+  for (
+    let i = 0;
+    i <
+    remainingPages.length;
+    i += batchSize
+  ) {
+    const batch =
+      remainingPages.slice(
+        i,
+        i + batchSize
+      );
+
+    const results =
+      await Promise.allSettled(
+        batch.map(
+          readPage
+        )
+      );
+
+    const failed =
+      results.find(
+        (result) =>
+          result.status ===
+          "rejected"
+      );
+
+    if (failed) {
+      throw failed.reason;
+    }
+
+    for (
+      let index = 0;
+      index <
+      results.length;
+      index++
+    ) {
+      const conversations =
+        results[index]
+          .value
+          .conversations;
+
+      if (
+        conversations.length ===
+        0
+      ) {
         throw new Error(
           `A caixa ${inboxId}, página ${batch[index]}, veio vazia antes do fim esperado. ` +
-          "Atualize novamente para conferir o total."
+            "Atualize novamente para conferir o total."
         );
       }
 
-      all = all.concat(conversations);
+      all =
+        all.concat(
+          conversations
+        );
     }
 
-    if (onProgress) onProgress(all.length, totalCount);
+    if (onProgress) {
+      onProgress(
+        all.length,
+        totalCount
+      );
+    }
   }
 
   return all;
 }
 
 export async function listCustomAttributeDefinitions() {
-  const { accountId } = getAuth();
+  const {
+    accountId,
+  } = getAuth();
 
-  const data = await request(
-    `/api/v1/accounts/${accountId}/custom_attribute_definitions`
-  );
+  const data =
+    await request(
+      `/api/v1/accounts/${accountId}/custom_attribute_definitions`
+    );
 
-  return Array.isArray(data) ? data : data?.payload || [];
+  return Array.isArray(data)
+    ? data
+    : data?.payload || [];
 }
 
 // ---------- perfil ----------
 
 export async function getProfile() {
-  return request(`/api/v1/profile`);
+  return request(
+    `/api/v1/profile`
+  );
 }
