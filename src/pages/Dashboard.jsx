@@ -578,9 +578,9 @@ export default function Dashboard({
           )}
 
           <button
-            onClick={() => {
-              logout();
-              onLogout();
+           onClick={async () => {
+           await logout();
+           onLogout();
             }}
             style={{
               padding: "6px 14px",
