@@ -34,15 +34,9 @@ const PERIODS = [
   { key: "custom", label: "Personalizado" },
 ];
 
-function periodToRange(
-  periodKey,
-  customStart,
-  customEnd
-) {
+function periodToRange(periodKey, customStart, customEnd) {
   const now = new Date();
-  const end = now
-    .toISOString()
-    .slice(0, 10);
+  const end = now.toISOString().slice(0, 10);
 
   if (periodKey === "today") {
     return {
@@ -53,26 +47,20 @@ function periodToRange(
 
   if (periodKey === "7d") {
     const d = new Date(now);
-
     d.setDate(d.getDate() - 6);
 
     return {
-      startDate: d
-        .toISOString()
-        .slice(0, 10),
+      startDate: d.toISOString().slice(0, 10),
       endDate: end,
     };
   }
 
   if (periodKey === "30d") {
     const d = new Date(now);
-
     d.setDate(d.getDate() - 29);
 
     return {
-      startDate: d
-        .toISOString()
-        .slice(0, 10),
+      startDate: d.toISOString().slice(0, 10),
       endDate: end,
     };
   }
@@ -85,9 +73,7 @@ function periodToRange(
     );
 
     return {
-      startDate: d
-        .toISOString()
-        .slice(0, 10),
+      startDate: d.toISOString().slice(0, 10),
       endDate: end,
     };
   }
@@ -246,52 +232,105 @@ export default function Dashboard({
       );
   }, []);
 
-  const loadData =
-    useCallback(async () => {
-      if (!funnelId) return;
+  const loadData = useCallback(async () => {
+    if (!funnelId) return;
 
-      setLoading(true);
-      setError("");
+    setLoading(true);
+    setError("");
 
-      setProgress({
-        stage: "kanban",
-        done: 0,
-        total: null,
-      });
+    setProgress({
+      stage: "kanban",
+      done: 0,
+      total: null,
+    });
 
-      try {
-        const kanbanItems =
+    try {
+      const currentFunnel = funnels.find(
+        (f) =>
+          String(f.id) === String(funnelId)
+      );
+
+      if (!currentFunnel) {
+        throw new Error(
+          "Funil selecionado não encontrado."
+        );
+      }
+
+      const stages =
+        currentFunnel.stages || {};
+
+      const stageIds =
+        Object.keys(stages);
+
+      if (stageIds.length === 0) {
+        throw new Error(
+          "Nenhuma etapa encontrada neste funil."
+        );
+      }
+
+      const expectedTotal =
+        stageIds.reduce(
+          (sum, stageId) =>
+            sum +
+            Number(
+              stages[stageId]
+                ?.items_count || 0
+            ),
+          0
+        );
+
+      let allItems = [];
+
+      for (const stageId of stageIds) {
+        const stageItems =
           await listAllKanbanItems({
             funnelId,
-
-            onProgress: (
-              done,
-              total
-            ) =>
-              setProgress({
-                stage: "kanban",
-                done,
-                total,
-              }),
+            stageId,
           });
 
-        setItems(kanbanItems);
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-        setProgress(null);
+        allItems =
+          allItems.concat(stageItems);
+
+        setProgress({
+          stage: "kanban",
+          done: allItems.length,
+          total: expectedTotal,
+        });
       }
-    }, [funnelId]);
+
+      // Remove eventual duplicidade entre respostas
+      const uniqueItems =
+        Array.from(
+          new Map(
+            allItems.map((item) => [
+              item.id,
+              item,
+            ])
+          ).values()
+        );
+
+      setItems(uniqueItems);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+      setProgress(null);
+    }
+  }, [funnelId, funnels]);
 
   useEffect(() => {
-    if (funnelId) {
+    if (
+      funnelId &&
+      funnels.length > 0
+    ) {
       loadData();
     }
-  }, [funnelId, loadData]);
+  }, [
+    funnelId,
+    funnels,
+    loadData,
+  ]);
 
-  // Ao trocar de funil, evita manter
-  // um agente que não existe no novo funil.
   useEffect(() => {
     setSelectedAgent("all");
   }, [funnelId]);
@@ -305,45 +344,42 @@ export default function Dashboard({
     customEnd
   );
 
-  // Primeiro mantém exatamente
-  // o filtro de período já existente.
-  const periodFiltered = useMemo(
-    () =>
-      filterByPeriod(items, {
+  const periodFiltered =
+    useMemo(
+      () =>
+        filterByPeriod(items, {
+          startDate,
+          endDate,
+        }),
+      [
+        items,
         startDate,
         endDate,
-      }),
-    [
-      items,
-      startDate,
-      endDate,
-    ]
-  );
+      ]
+    );
 
-  // Lista de agentes encontrada diretamente
-  // nos cards retornados pela API.
-  const availableAgents = useMemo(() => {
-    const names = new Set();
+  const availableAgents =
+    useMemo(() => {
+      const names = new Set();
 
-    items.forEach((item) => {
-      getAssignedAgentNames(
-        item
-      ).forEach((name) =>
-        names.add(name)
-      );
-    });
+      items.forEach((item) => {
+        getAssignedAgentNames(
+          item
+        ).forEach((name) =>
+          names.add(name)
+        );
+      });
 
-    return Array.from(names).sort(
-      (a, b) =>
+      return Array.from(
+        names
+      ).sort((a, b) =>
         a.localeCompare(
           b,
           "pt-BR"
         )
-    );
-  }, [items]);
+      );
+    }, [items]);
 
-  // Aplica o novo filtro por agente
-  // depois do período.
   const filtered = useMemo(() => {
     if (
       selectedAgent === "all"
@@ -362,7 +398,6 @@ export default function Dashboard({
     selectedAgent,
   ]);
 
-  // Calcula total geral e total por etapa.
   const summary = useMemo(() => {
     const stages = new Map();
 
