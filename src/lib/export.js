@@ -1,3 +1,4 @@
+
 import * as XLSX from "xlsx";
 
 export function customAttributesToMap(item) {
@@ -209,14 +210,28 @@ export const RENDER_EXPORT_COLUMNS = [
       ),
   },
 
+  // CORREÇÃO:
+  // Reconhece tanto prazos por data
+  // quanto agendamentos com horário.
   {
-    label:
-      "Data do Prazo",
-    getValue: (item) =>
-      formatDeadline(
-        item.item_details
-          ?.deadline_at
-      ),
+    label: "Data do Prazo",
+    getValue: (item) => {
+      const details =
+        item.item_details;
+
+      const rawDate =
+        details?.scheduling_type === "schedule"
+          ? (
+              details?.scheduled_at ||
+              details?.deadline_at
+            )
+          : (
+              details?.deadline_at ||
+              details?.scheduled_at
+            );
+
+      return formatDeadline(rawDate);
+    },
   },
 
   {
